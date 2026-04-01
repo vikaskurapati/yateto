@@ -274,6 +274,58 @@ class tinytc(CodeGenerator):
     return self.archSupported() and not (sparseA or sparseB) and alpha == 1.0 and beta in [0.0, 1.0] and target == 'gpu'
 
 
+class Triton(CodeGenerator):
+  """Triton GPU kernel generator for CUDA and HIP backends.
+  
+  Generates optimized GPU kernels using Triton's ahead-of-time (AOT) compilation.
+  Supports batched GEMM operations with various transpose and scaling configurations.
+  """
+  def __init__(self, arch):
+    super().__init__('', [], '', arch)
+    self._arch = arch
+
+  def preference(self, m, n, k, sparseA, sparseB, transA, transB, alpha, beta, alignedA, alignedC):
+    """Return HIGHEST preference for operations Triton supports."""
+    return Preference.HIGHEST
+
+  def archSupported(self):
+    """Check if the architecture backend is supported by Triton.
+    
+    Triton supports CUDA (NVIDIA) and HIP (AMD) backends.
+    SYCL/oneAPI is handled by tinytc, not Triton.
+    """
+    # Check if backend attribute exists (GPU architectures only)
+    if not hasattr(self._arch, 'backend'):
+      return False
+    return self._arch.backend.lower() in {'cuda', 'hip'}
+
+  def supported(self, m, n, k, sparseA, sparseB, transA, transB, alpha,
+                beta, alignedA, alignedC, target):
+    """Check if a specific GEMM configuration is supported.
+    
+    Triton supports:
+    - Dense matrices only (no sparsity)
+    - Any alpha and beta values (flexible scaling)
+    - All transpose configurations
+    - GPU target only
+    - Any alignment configuration
+    
+    Args:
+      m, n, k: Matrix dimensions
+      sparseA, sparseB: Sparsity patterns (must be False)
+      transA, transB: Transpose flags (any combination supported)
+      alpha, beta: Scaling factors (any values supported)
+      alignedA, alignedC: Memory alignment (any configuration supported)
+      target: Compilation target ('gpu' for Triton)
+    
+    Returns:
+      True if configuration is supported, False otherwise
+    """
+    return (self.archSupported() and 
+            not (sparseA or sparseB) and 
+            target == 'gpu')
+
+
 class GeneratorCollection(object):
   def __init__(self, gemmTools: List[GemmTool]):
     self.gemmTools = gemmTools
