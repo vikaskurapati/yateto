@@ -226,7 +226,7 @@ def make_triton_kernel_name(operation: str, transpose_a: bool = False, transpose
     return name
 
 
-def compile_triton_kernel(kernel_source: str, output_path: str, arch: str, **compile_options) -> str:
+def compile_triton_kernel(kernel_source: str, output_path: str, arch: str, kernel_name: str = None, **compile_options) -> str:
     """Compile Triton kernel to binary using AOT compilation.
     
     This function writes the kernel source to a temporary Python file,
@@ -283,11 +283,15 @@ import triton
 
 # Get the JIT function
 kernel_fn = None
-for name in dir():
-    obj = eval(name)
-    if hasattr(obj, '__triton_jit__'):
-        kernel_fn = obj
-        break
+if "{kernel_name}" != "None" and "{kernel_name}" in dir():
+    kernel_fn = eval("{kernel_name}")
+else:
+    for name in dir():
+        obj = eval(name)
+        # Triton JIT functions have a 'compile' method
+        if hasattr(obj, 'compile') and hasattr(obj, 'run') and not isinstance(obj, type):
+            kernel_fn = obj
+            break
 
 if kernel_fn is None:
     raise RuntimeError("No @triton.jit function found in kernel")

@@ -91,7 +91,7 @@ class TritonWriter(GpuRoutineGenerator):
   def __call__(self, routineName, fileName):
     output_dir = os.path.dirname(fileName)
     kernel_path = os.path.join(output_dir, self._kernel_file)
-    compile_triton_kernel(self._kernel_source, kernel_path, self._arch)
+    compile_triton_kernel(self._kernel_source, kernel_path, self._arch, kernel_name=self._wrapper.kernel_name)
 
     self._wrapper.kernel_file = kernel_path
     with open(fileName, 'a') as f:
