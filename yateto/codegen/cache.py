@@ -1,4 +1,7 @@
+import os
+
 from .code import Cpp
+from .triton_common import compile_triton_kernel
 
 class RoutineGenerator(object):
   def __call__(self, routineName, fileName):
@@ -67,5 +70,31 @@ class TinytcWriter(GpuRoutineGenerator):
   def __call__(self, routineName, fileName):
     with open(fileName, 'a') as f:
       f.write(self._source)
+
+    return self._signature
+
+class TritonWriter(GpuRoutineGenerator):
+  def __init__(self, signature, wrapper, kernel_source, arch, kernel_file):
+    self._signature = signature
+    self._wrapper = wrapper
+    self._kernel_source = kernel_source
+    self._arch = arch
+    self._kernel_file = kernel_file
+
+  def __eq__(self, other):
+    return self._signature == other._signature
+
+  def header(self, cpp):
+    cpp.includeSys('cuda.h')
+    cpp.includeSys('stdexcept')
+
+  def __call__(self, routineName, fileName):
+    output_dir = os.path.dirname(fileName)
+    kernel_path = os.path.join(output_dir, self._kernel_file)
+    compile_triton_kernel(self._kernel_source, kernel_path, self._arch)
+
+    self._wrapper.kernel_file = kernel_path
+    with open(fileName, 'a') as f:
+      f.write(self._wrapper.definition())
 
     return self._signature

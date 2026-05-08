@@ -370,7 +370,10 @@ class DefaultGeneratorCollection(GeneratorCollection):
     # GPU/Intel
     ttc = tinytc(arch)
 
-    order = [libxsmm_jit, libxsmm, pspamm, mkl, openblas, blis, eigen, forge, ttc]
+    # GPU/Triton
+    triton = Triton(arch)
+
+    order = [libxsmm_jit, libxsmm, pspamm, mkl, openblas, blis, eigen, forge, ttc, triton]
 
     generators = [gen for gen in order if gen.archSupported()]
 

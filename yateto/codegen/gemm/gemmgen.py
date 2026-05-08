@@ -5,9 +5,10 @@ from abc import ABC
 import numpy as np
 from collections import namedtuple
 
-from ..cache import RoutineGenerator, GpuRoutineGenerator, TinytcWriter
-from ...gemm_configuration import BLASlike, CodeGenerator, GemmForge, tinytc
+from ..cache import RoutineGenerator, GpuRoutineGenerator, TinytcWriter, TritonWriter
+from ...gemm_configuration import BLASlike, CodeGenerator, GemmForge, tinytc, Triton
 from ..common import BatchedOperationsAux, TinytcKernelArgument, TinytcScalarKernelArgument, TinytcWrapper
+from ..triton_common import TritonKernelArgument, TritonScalarKernelArgument, TritonWrapper
 from ..tiny_tensor_language import *
 import importlib.util
 
@@ -228,6 +229,68 @@ class GemmGen(object):
       cpp(wrapper.call())
       prototype = wrapper.prototype()
       routineCache.addRoutine(prototype, TinytcWriter(prototype, wrapper.definition()))
+    elif isinstance(self._gemm_cfg, Triton):
+      from .triton import tritonGemmGen
+      aux = BatchedOperationsAux(self._arch.typename)
+      gemm = {
+        'M':            m.size(),
+        'N':            n.size(),
+        'K':            k.size(),
+        'LDA':          ldA,
+        'addrA':        aux.deduce_addresing(d.leftTerm),
+        'distA':        d.leftTerm.memoryLayout.requiredReals(),
+        'LDB':          ldB,
+        'addrB':        aux.deduce_addresing(d.rightTerm),
+        'distB':        d.rightTerm.memoryLayout.requiredReals(),
+        'LDC':          ldC,
+        'addrC':        aux.deduce_addresing(d.result),
+        'distC':        d.result.memoryLayout.requiredReals(),
+        'alpha':        d.alpha,
+        'beta':         d.beta,
+        'transA':       d.transA,
+        'transB':       d.transB,
+      }
+
+      kernel_source = tritonGemmGen(self._arch, gemm)
+
+      def call_arg(name, term, modified, offset):
+          return TritonKernelArgument(name, term.name, term.is_compute_constant, term.is_temporary, modified, offset)
+      
+      offset_a = self._offset(term=d.leftTerm, offset2=(m.start, k.start), transpose=d.transA)
+      offset_b = self._offset(term=d.rightTerm, offset2=(k.start, n.start), transpose=d.transB)
+      offset_c = self._offset(term=d.result, offset2=(m.start, n.start), transpose=False)
+      
+      args = [
+        call_arg('A', d.leftTerm, False, offset_a),
+        call_arg('B', d.rightTerm, False, offset_b),
+        call_arg('C', d.result, True, offset_c),
+        TritonScalarKernelArgument('alpha', str(d.alpha)),
+        TritonScalarKernelArgument('beta', str(d.beta))
+      ]
+      
+      from ..triton_common import make_triton_kernel_name
+      routine_name = make_triton_kernel_name('gemm', 
+                                             transpose_a=d.transA, 
+                                             transpose_b=d.transB, 
+                                             m=gemm['M'], n=gemm['N'], k=gemm['K'],
+                                             lda=gemm['LDA'], ldb=gemm['LDB'], ldc=gemm['LDC'],
+                                             addra=gemm['addrA'], addrb=gemm['addrB'], addrc=gemm['addrC'],
+                                             alpha=gemm['alpha'], beta=gemm['beta'])
+      
+      # Determine backend based on architecture
+      arch_name = self._arch.name if hasattr(self._arch, 'name') else 'sm_90a' # fallback
+      
+      wrapper = TritonWrapper(
+          kernel_file=f"{routine_name}.cubin" if arch_name.startswith('sm_') else f"{routine_name}.so",
+          kernel_name=routine_name,
+          arguments=args,
+          real_type=self._arch.typename,
+          name=routine_name + "_wrapper"
+      )
+
+      cpp(wrapper.call())
+      prototype = wrapper.prototype()
+      routineCache.addRoutine(prototype, TritonWriter(prototype, wrapper, kernel_source, arch_name, wrapper.kernel_file))
     else:
       gemm = {
         'M':            m.size(),
