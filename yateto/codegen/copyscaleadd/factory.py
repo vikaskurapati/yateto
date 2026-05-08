@@ -1,7 +1,8 @@
 from ..common import *
 from .generic import Generic
-from ...gemm_configuration import tinytc
+from ...gemm_configuration import tinytc, Triton
 from .tinytc import CopyScaleAddTinytc
+from .triton import CopyScaleAddTriton
 
 import importlib
 gf_spec = importlib.util.find_spec('gemmforge')
@@ -44,8 +45,11 @@ class Description(object):
 def generator(arch, descr, gemm_cfg, target):
   if target == 'gpu':
       hasTinytc = any([isinstance(tool, tinytc) for tool in gemm_cfg.gemmTools])
+      hasTriton = any([isinstance(tool, Triton) for tool in gemm_cfg.gemmTools])
       if hasTinytc:
           return CopyScaleAddTinytc(arch, descr)
+      elif hasTriton:
+          return CopyScaleAddTriton(arch, descr)
       elif gf_spec:
           return CopyScaleAddGenerator(arch, descr)
       else:
