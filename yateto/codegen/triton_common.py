@@ -278,35 +278,90 @@ def compile_triton_kernel(kernel_source: str, output_path: str, arch: str, kerne
             f.write(f'''
 import sys
 sys.path.insert(0, "{tmpdir}")
-# Get the JIT function
+
+import triton
+import kernel
+
+def is_triton_jit_function(obj):
+    """Return True if ob looks like a Triton @triton.jit function.
+    
+    Triton has chaned the exact JITFunction API across versions, sd avoid
+    relying on a single attribute pair such as compile/run.
+    """
+    
+    cls = type(obj)
+    cls_name = cls.__name__
+    cls_module = getattr(cls, "__module__", "")
+    
+    if cls_name == "JITFunction" and cls_module.startswith("triton"):
+        return True
+    
+    if hasattr(obj, "fn") and callable(getattr(obj, "fn")) and cls_module.startswith("triton"):
+        return True
+    
+    if hasattr(obj, "src") and cls_module.startswith("triton"):
+        return True
+    
+    return False
+
+requested_kernel_name = {kernel_name!r}
 kernel_fn = None
-try:
-    import kernel
-    if "{kernel_name}" != "None":
-        kernel_fn = getattr(kernel, "{kernel_name}")
-    else:
-        for name in dir(kernel):
-            obj = getattr(kernel, name)
-            if hasattr(obj, 'compile') and hasattr(obj, 'run') and not isinstance(obj, type):
-                kernel_fn = obj
-                break
-except (ImportError, AttributeError):
-    pass
+
+if requested_kernel_name is not None:
+    kernel_fn = getattr(kernel, requested_kernel_name, None)
+    if kernel_fn is not None and not is_triton_jit_function(kernel_fn):
+        raise RuntimeError(
+            f"Object named '{{requested_kernel_name}}' exists but is not a @triton.jit function "
+            f"(type={{type(kernel_fn)!r}})"
+        )
+else:
+    candidates = []
+    for name in dir(kernel):
+        obj = getattr(kernel, name)
+        if is_triton_jit_function(obj):
+            candidates.append((name, obj))
+    
+    if len(candidates) == 1:
+        kernel_fun = candidates[0][1]
+    elif len(candidates) > 1:
+        candidate_names = ", ".join(name for name, _ in candidates)
+        raise RuntimeError(
+        f"Multiple @triton.jit functions found in kernel: {{candidate_names}}. "
+        "Pass kernel_name explicitly."
+        )
 
 if kernel_fn is None:
-    raise RuntimeError("No @triton.jit function found in kernel")
+    exported = ", ".join(name for name in dir(kernel) if not name.startswith("__"))
+    raise RuntimeError(
+        "No @triton.jit function found in kernel."
+        + (f" named '{{requested_kernel_name}}'" if requested_kernel_name is not None else "")
+        + f". Exported names: {{exported}}"
+    )
 
-# Compile kernel
-import triton.backends.{backend} as backend
 compiled = kernel_fn.compile(target="{target_str}")
 
-# Write binary to output
-with open("{output_path}", "wb") as f:
-    f.write(compiled.asm["{backend}"])
+asm = getattr(compiled, "asm", None)
+if asm is None:
+    raise RuntimeError("Triton compilation succeeded but produced no asm dictionary")
 
-print(f"Compiled kernel to {{len(compiled.asm['{backend}'])}} bytes")
+binary = None
+for key in ("cubin", "hsaco", "{backend}", "ptx", "llir"):
+    if key in asm:
+        binary = asm[key]
+        break
+
+if binary is None:
+    raise RuntimeError(f"Could not find a binary artifact in compiled asm keys: {{list(asm.keys())}}")
+
+if isinstance(binary, str):
+    binary = binary.encode("utf-8")
+
+with open("{output_path}", "wb") as f:
+    f.write(binary)
+
+print(f"Compiled kernel to {{len(binary)}} bytes")
 ''')
-        
+
         # Run compilation
         result = subprocess.run(
             ['python3', compile_script],
