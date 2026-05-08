@@ -251,7 +251,16 @@ class GemmGen(object):
         'transB':       d.transB,
       }
 
-      kernel_source = tritonGemmGen(self._arch, gemm)
+      from ..triton_common import make_triton_kernel_name
+      routine_name = make_triton_kernel_name('gemm',
+                                             transpose_a=d.transA,
+                                             transpose_b=d.transB,
+                                             m=gemm['M'], n=gemm['N'], k=gemm['K'],
+                                             lda=gemm['LDA'], ldb=gemm['LDB'], ldc=gemm['LDC'],
+                                             addra=gemm['addrA'], addrb=gemm['addrB'], addrc=gemm['addrC'],
+                                             alpha=gemm['alpha'], beta=gemm['beta'])
+
+      kernel_source = tritonGemmGen(self._arch, gemm, kernel_name=routine_name)
 
       def call_arg(name, term, modified, offset):
           return TritonKernelArgument(name, term.name, term.is_compute_constant, term.is_temporary, modified, offset)
@@ -267,15 +276,6 @@ class GemmGen(object):
         TritonScalarKernelArgument('alpha', str(d.alpha)),
         TritonScalarKernelArgument('beta', str(d.beta))
       ]
-      
-      from ..triton_common import make_triton_kernel_name
-      routine_name = make_triton_kernel_name('gemm', 
-                                             transpose_a=d.transA, 
-                                             transpose_b=d.transB, 
-                                             m=gemm['M'], n=gemm['N'], k=gemm['K'],
-                                             lda=gemm['LDA'], ldb=gemm['LDB'], ldc=gemm['LDC'],
-                                             addra=gemm['addrA'], addrb=gemm['addrB'], addrc=gemm['addrC'],
-                                             alpha=gemm['alpha'], beta=gemm['beta'])
       
       # Determine backend based on architecture
       arch_name = self._arch.name if hasattr(self._arch, 'name') else 'sm_90a' # fallback
