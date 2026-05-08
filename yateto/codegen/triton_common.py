@@ -278,20 +278,20 @@ def compile_triton_kernel(kernel_source: str, output_path: str, arch: str, kerne
             f.write(f'''
 import sys
 sys.path.insert(0, "{tmpdir}")
-from kernel import *
-import triton
-
 # Get the JIT function
 kernel_fn = None
-if "{kernel_name}" != "None" and "{kernel_name}" in dir():
-    kernel_fn = eval("{kernel_name}")
-else:
-    for name in dir():
-        obj = eval(name)
-        # Triton JIT functions have a 'compile' method
-        if hasattr(obj, 'compile') and hasattr(obj, 'run') and not isinstance(obj, type):
-            kernel_fn = obj
-            break
+try:
+    import kernel
+    if "{kernel_name}" != "None":
+        kernel_fn = getattr(kernel, "{kernel_name}")
+    else:
+        for name in dir(kernel):
+            obj = getattr(kernel, name)
+            if hasattr(obj, 'compile') and hasattr(obj, 'run') and not isinstance(obj, type):
+                kernel_fn = obj
+                break
+except (ImportError, AttributeError):
+    pass
 
 if kernel_fn is None:
     raise RuntimeError("No @triton.jit function found in kernel")
