@@ -135,10 +135,18 @@ def copyscaleadd_kernel({", ".join(params)}):
             TritonScalarKernelArgument('alpha', str(alpha))
         ]
 
-        wrapper = TritonWrapper(kernel_name, kernel_source, args)
+        arch_name = self._arch.name if hasattr(self._arch, 'name') else 'sm_90a' # fallback
+        
+        wrapper = TritonWrapper(
+            kernel_file=f"{kernel_name}.cubin" if arch_name.startswith('sm_') else f"{kernel_name}.so",
+            kernel_name=kernel_name,
+            arguments=args,
+            real_type=self._arch.typename,
+            name=kernel_name + "_wrapper"
+        )
         
         prototype = wrapper.prototype()
-        routineCache.addRoutine(prototype, TritonWriter(wrapper, self._arch))
+        routineCache.addRoutine(prototype, TritonWriter(prototype, wrapper, kernel_source, arch_name, wrapper.kernel_file))
         
         cpp(wrapper.call())
         
