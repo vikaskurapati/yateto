@@ -247,7 +247,7 @@ def compile_triton_kernel(kernel_source: str, output_path: str, arch: str, **com
     # Determine backend from architecture
     if arch.startswith('sm_'):
         backend = 'cuda'
-        target_str = arch
+        target_str = f"cuda:{arch.replace('sm_', '')}"
     elif arch.startswith('gfx'):
         backend = 'hip'
         target_str = arch
