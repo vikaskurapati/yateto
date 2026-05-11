@@ -475,7 +475,25 @@ def _target_label(target):
     return f"{{type(target).__name__}}(backend={{backend_attr!r}}, arch={{arch_attr!r}})"
 
 
-def compile_with_compat(kernel_fn, target_str, backend, arch_hint):
+def _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name):
+    candidates = [
+        kernel_fn,
+        getattr(kernel_fn, "fn", None),
+        getattr(kernel_fn, "src", None),
+        kernel_source_path,
+    ]
+    if requested_kernel_name:
+        candidates.append(kernel_source_path + ":" + requested_kernel_name)
+    return [candidate for candidate in _dedup_preserve(candidates) if candidate is not None]
+
+
+def _source_label(source):
+    if isinstance(source, str):
+        return repr(source)
+    return f"{{type(source).__name__}}"
+
+
+def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source_path, requested_kernel_name):
     errors = []
     triton_compile = getattr(triton, "compile", None)
     compiler_compile = None
@@ -488,6 +506,7 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint):
 
     gputarget_classes = _collect_gputarget_classes(triton_compile, compiler_compile)
     targets = _target_candidates(target_str, backend, arch_hint, gputarget_classes)
+    sources = _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name)
 
     # Triton variants where JITFunction exposes `.compile()`
     compile_method = getattr(kernel_fn, "compile", None)
@@ -502,28 +521,24 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint):
 
     # Triton variants with module-level `triton.compile(...)`
     if callable(triton_compile):
-        for candidate in (kernel_fn, getattr(kernel_fn, "fn", None)):
-            if candidate is None:
-                continue
+        for source in sources:
             for target in targets:
                 try:
-                    return triton_compile(candidate, target=target)
+                    return triton_compile(source, target=target)
                 except Exception as err:
                     errors.append(
-                        f"triton.compile(type={{type(candidate).__name__}}, target={{_target_label(target)}}) failed: {{err!r}}"
+                        f"triton.compile(source={{_source_label(source)}}, target={{_target_label(target)}}) failed: {{err!r}}"
                     )
 
     # Triton variants where compiler API is exposed via triton.compiler.compile(...)
     if callable(compiler_compile):
-        for candidate in (kernel_fn, getattr(kernel_fn, "fn", None)):
-            if candidate is None:
-                continue
+        for source in sources:
             for target in targets:
                 try:
-                    return compiler_compile(candidate, target=target)
+                    return compiler_compile(source, target=target)
                 except Exception as err:
                     errors.append(
-                        f"triton.compiler.compile(type={{type(candidate).__name__}}, target={{_target_label(target)}}) failed: {{err!r}}"
+                        f"triton.compiler.compile(source={{_source_label(source)}}, target={{_target_label(target)}}) failed: {{err!r}}"
                     )
 
     details = "\\n".join(errors) if errors else "<no compile entry points were available>"
@@ -582,6 +597,8 @@ compiled = compile_with_compat(
     target_str="{target_str}",
     backend="{backend}",
     arch_hint="{target_arch}",
+    kernel_source_path={kernel_file!r},
+    requested_kernel_name=requested_kernel_name,
 )
 binary = extract_binary(compiled)
 
