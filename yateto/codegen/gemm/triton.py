@@ -46,16 +46,14 @@ def tritonGemmGen(arch, gd, kernel_name=''):
   params.extend(['alpha', 'beta'])
 
   if gd['transA']:
-    ptr_a = f'  a_ptrs = base_A + offs_k[:, None] + offs_m[None, :] * {gd["LDA"]}'
-    load_a = '  a = tl.trans(tl.load(a_ptrs))'
+    load_a_vec = f'    a_vec = tl.load(base_A + kk + offs_m * {gd["LDA"]})'
   else:
-    ptr_a = f'  a_ptrs = base_A + offs_m[:, None] + offs_k[None, :] * {gd["LDA"]}'
-    load_a = '  a = tl.load(a_ptrs)'
+    load_a_vec = f'    a_vec = tl.load(base_A + offs_m + kk * {gd["LDA"]})'
 
   if gd['transB']:
-    ptr_b = f'  b_ptrs = base_B + offs_n[None, :] + offs_k[:, None] * {gd["LDB"]}'
+    load_b_vec = f'    b_vec = tl.load(base_B + offs_n + kk * {gd["LDB"]})'
   else:
-    ptr_b = f'  b_ptrs = base_B + offs_k[:, None] + offs_n[None, :] * {gd["LDB"]}'
+    load_b_vec = f'    b_vec = tl.load(base_B + kk + offs_n * {gd["LDB"]})'
 
   batch_guard = ''
   if batch_limit is not None:
@@ -71,14 +69,12 @@ def {kernel_name}({', '.join(params)}):
 {batch_guard}{chr(10).join(base_statements)}
   offs_m = tl.arange(0, {gd['M']})
   offs_n = tl.arange(0, {gd['N']})
-  offs_k = tl.arange(0, {gd['K']})
+  acc = tl.zeros(({gd['M']}, {gd['N']}), dtype={floating_type})
+  for kk in range({gd['K']}):
+{load_a_vec}
+{load_b_vec}
+    acc += a_vec[:, None] * b_vec[None, :]
 
-{ptr_a}
-{load_a}
-{ptr_b}
-  b = tl.load(b_ptrs)
-
-  acc = tl.dot(a, b).to({floating_type})
   c_ptrs = base_C + offs_m[:, None] + offs_n[None, :] * {gd['LDC']}
   c = alpha * acc + beta * tl.load(c_ptrs)
   tl.store(c_ptrs, c)

@@ -44,7 +44,9 @@ class TestTritonGemmGen(unittest.TestCase):
         # Check arguments and computation
         self.assertIn('def gemm_nn_k_32_m_32_n_32', kernel_source)
         self.assertIn('A, num_elements_A, extra_offset_A, B, num_elements_B, extra_offset_B, C, num_elements_C, extra_offset_C, alpha, beta', kernel_source)
-        self.assertIn('tl.dot(a, b)', kernel_source)
+        self.assertIn('acc = tl.zeros((32, 32), dtype=tl.float64)', kernel_source)
+        self.assertIn('for kk in range(32):', kernel_source)
+        self.assertIn('acc += a_vec[:, None] * b_vec[None, :]', kernel_source)
         
     def test_gemm_gen_transposed(self):
         gd = {
@@ -70,7 +72,8 @@ class TestTritonGemmGen(unittest.TestCase):
         self.assertIn('gemm_tt', kernel_source)
         
         # Transpose logic check
-        self.assertIn('a = tl.trans(tl.load(a_ptrs))', kernel_source)
+        self.assertIn('a_vec = tl.load(base_A + kk + offs_m * 16)', kernel_source)
+        self.assertIn('b_vec = tl.load(base_B + offs_n + kk * 16)', kernel_source)
         
     def test_gemm_gen_addressing_modes(self):
         gd = {

@@ -558,7 +558,7 @@ def _ast_source_candidates(kernel_fn, kernel_source_path):
     signature_candidates.append(None)
     signature_candidates = _dedup_preserve(signature_candidates)
 
-    fn_candidates = [getattr(kernel_fn, "fn", None), kernel_fn]
+    fn_candidates = [kernel_fn, getattr(kernel_fn, "fn", None)]
     fn_candidates = [fn for fn in _dedup_preserve(fn_candidates) if fn is not None]
 
     ast_sources = []
