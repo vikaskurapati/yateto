@@ -69,10 +69,6 @@ def {kernel_name}({', '.join(params)}):
   for i in range({gd['M']}):
     for j in range({gd['N']}):
       acc = tl.full((), 0.0, {floating_type})
-      for kk in range({gd['K']}):
-        a_val = tl.load(base_A + {a_index})
-        b_val = tl.load(base_B + {b_index})
-        acc += a_val * b_val
       c_ptr = base_C + i + j * {gd['LDC']}
       c_old = tl.load(c_ptr)
       c_val = alpha * acc + beta * c_old

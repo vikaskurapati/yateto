@@ -138,7 +138,7 @@ def copyscaleadd_kernel({", ".join(params)}):
         arch_name = self._arch.name if hasattr(self._arch, 'name') else 'sm_90a' # fallback
         
         wrapper = TritonWrapper(
-            kernel_file=f"{kernel_name}.cubin" if arch_name.startswith('sm_') else f"{kernel_name}.so",
+            kernel_file=f"{kernel_name}.cubin",
             kernel_name=kernel_name,
             arguments=args,
             real_type=self._arch.typename,
