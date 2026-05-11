@@ -280,6 +280,7 @@ def compile_triton_kernel(kernel_source: str, output_path: str, arch: str, kerne
             f.write(f'''
 import sys
 import os
+import inspect
 sys.path.insert(0, "{tmpdir}")
 
 import triton
@@ -479,7 +480,6 @@ def _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name):
     candidates = [
         kernel_fn,
         getattr(kernel_fn, "fn", None),
-        getattr(kernel_fn, "src", None),
         kernel_source_path,
     ]
     if requested_kernel_name:
@@ -491,6 +491,110 @@ def _source_label(source):
     if isinstance(source, str):
         return repr(source)
     return f"{{type(source).__name__}}"
+
+
+def _guess_signature(kernel_fn, kernel_source_path):
+    fn = getattr(kernel_fn, "fn", None)
+    if fn is None:
+        return None
+
+    scalar_ty = "fp32"
+    try:
+        with open(kernel_source_path, "r") as f:
+            kernel_src = f.read()
+        if "tl.float64" in kernel_src:
+            scalar_ty = "fp64"
+    except Exception:
+        pass
+
+    try:
+        params = list(inspect.signature(fn).parameters.keys())
+    except Exception:
+        return None
+
+    sig_items = []
+    for name in params:
+        lname = name.lower()
+        if lname.startswith("num_elements") or lname.startswith("extra_offset"):
+            sig_items.append("i64")
+        elif lname in ("alpha", "beta"):
+            sig_items.append(scalar_ty)
+        else:
+            sig_items.append("*" + scalar_ty)
+    return sig_items
+
+
+def _ast_source_candidates(kernel_fn, kernel_source_path):
+    ast_classes = []
+
+    def add_ast_class(candidate):
+        if isinstance(candidate, type) and candidate.__name__ == "ASTSource" and candidate not in ast_classes:
+            ast_classes.append(candidate)
+
+    for module_name in (
+        "triton.compiler.compiler",
+        "triton.compiler",
+    ):
+        try:
+            module = __import__(module_name, fromlist=["ASTSource"])
+            add_ast_class(getattr(module, "ASTSource", None))
+        except Exception:
+            pass
+
+    triton_compile = getattr(triton, "compile", None)
+    if callable(triton_compile):
+        globals_dict = getattr(triton_compile, "__globals__", None)
+        if isinstance(globals_dict, dict):
+            add_ast_class(globals_dict.get("ASTSource"))
+
+    signature_items = _guess_signature(kernel_fn, kernel_source_path)
+    signature_candidates = []
+    if signature_items:
+        signature_candidates.append(",".join(signature_items))
+        signature_candidates.append(dict(enumerate(signature_items)))
+    maybe_sig = getattr(kernel_fn, "signature", None)
+    if maybe_sig is not None:
+        signature_candidates.append(maybe_sig)
+    signature_candidates.append(None)
+    signature_candidates = _dedup_preserve(signature_candidates)
+
+    fn_candidates = [getattr(kernel_fn, "fn", None), kernel_fn]
+    fn_candidates = [fn for fn in _dedup_preserve(fn_candidates) if fn is not None]
+
+    ast_sources = []
+    for ast_cls in ast_classes:
+        try:
+            param_names = list(inspect.signature(ast_cls).parameters.keys())
+        except Exception:
+            param_names = []
+        has_signature = "signature" in param_names
+        has_fn = "fn" in param_names or "function" in param_names
+        fn_key = "fn" if "fn" in param_names else ("function" if "function" in param_names else None)
+
+        for fn in fn_candidates:
+            for sig in signature_candidates:
+                kwargs = dict()
+                if has_fn and fn_key:
+                    kwargs[fn_key] = fn
+                if has_signature and sig is not None:
+                    kwargs["signature"] = sig
+
+                if kwargs:
+                    try:
+                        ast_sources.append(ast_cls(**kwargs))
+                    except Exception:
+                        pass
+
+                # positional fallbacks for older constructor signatures
+                try:
+                    if sig is not None:
+                        ast_sources.append(ast_cls(fn, sig))
+                    else:
+                        ast_sources.append(ast_cls(fn))
+                except Exception:
+                    pass
+
+    return _dedup_preserve(ast_sources)
 
 
 def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source_path, requested_kernel_name):
@@ -506,7 +610,9 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source
 
     gputarget_classes = _collect_gputarget_classes(triton_compile, compiler_compile)
     targets = _target_candidates(target_str, backend, arch_hint, gputarget_classes)
-    sources = _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name)
+    ast_sources = _ast_source_candidates(kernel_fn, kernel_source_path)
+    base_sources = _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name)
+    sources = _dedup_preserve(ast_sources + base_sources)
 
     # Triton variants where JITFunction exposes `.compile()`
     compile_method = getattr(kernel_fn, "compile", None)
