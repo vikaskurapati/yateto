@@ -13,9 +13,9 @@ def _operand_parameters(name, address_mode):
   raise ValueError(f'Unknown addressing mode: {address_mode}')
 
 
-def _operand_base(name, address_mode, distance):
+def _operand_base(name, address_mode, distance, float_type):
   if address_mode == 'pointer_based':
-    return f'tl.load({name} + pid) + extra_offset_{name}'
+    return f'tl.load({name} + pid).to(tl.pointer_type({float_type})) + extra_offset_{name}'
   if address_mode == 'strided':
     return f'{name} + pid * {distance}'
   if address_mode == 'none':
@@ -31,7 +31,7 @@ def tritonGemmGen(arch, gd, kernel_name=''):
                                           m=gd['M'],
                                           n=gd['N'],
                                           k=gd['K'])
-
+  floating_type = 'tl.float64' if arch.bytesPerReal == 8 else 'tl.float32'
   params = []
   batch_limit = None
   base_statements = []
@@ -41,7 +41,7 @@ def tritonGemmGen(arch, gd, kernel_name=''):
     params.extend(op_params)
     if batch_limit is None and num_elements is not None:
       batch_limit = num_elements
-    base_statements.append(f'  base_{op} = {_operand_base(op, address_mode, gd[f"dist{op}"])}')
+    base_statements.append(f'  base_{op} = {_operand_base(op, address_mode, gd[f"dist{op}"], floating_type)}')
 
   params.extend(['alpha', 'beta'])
 

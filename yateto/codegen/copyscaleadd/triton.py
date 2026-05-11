@@ -12,9 +12,9 @@ def _operand_parameters(name, address_mode):
     return [name]
   raise ValueError(f'Unknown addressing mode: {address_mode}')
 
-def _operand_base(name, address_mode, distance):
+def _operand_base(name, address_mode, distance, floating_type):
   if address_mode == 'pointer_based':
-    return f'tl.load({name} + batch_idx) + extra_offset_{name}'
+      return f'tl.load({name} + batch_idx).to(tl.pointer_type({floating_type})) + extra_offset_{name}'
   if address_mode == 'strided':
     return f'{name} + batch_idx * {distance}'
   if address_mode == 'none':
@@ -79,11 +79,11 @@ class CopyScaleAddTriton(object):
         
         dist_A = d.term.memoryLayout.requiredReals()
         dist_B = d.result.memoryLayout.requiredReals()
-        
-        base_A = _operand_base('A', address_mode_A, dist_A)
-        base_B = _operand_base('B', address_mode_B, dist_B)
-        
+
         floating_type = 'tl.float64' if self._arch.bytesPerReal == 8 else 'tl.float32'
+
+        base_A = _operand_base('A', address_mode_A, dist_A, floating_type)
+        base_B = _operand_base('B', address_mode_B, dist_B, floating_type)
         
         kernel_source = f'''import triton
 import triton.language as tl

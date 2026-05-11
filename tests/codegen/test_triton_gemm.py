@@ -47,6 +47,8 @@ class TestTritonGemmGen(unittest.TestCase):
         self.assertIn('for i in tl.static_range(0, 32):', kernel_source)
         self.assertIn('for j in tl.static_range(0, 32):', kernel_source)
         self.assertIn('for kk in tl.static_range(0, 32):', kernel_source)
+        self.assertIn('tl.pointer_type(tl.float64)', kernel_source)
+        self.assertIn('.to(tl.pointer_type(tl.float64))', kernel_source)
         self.assertIn('acc += a_val * b_val', kernel_source)
         
     def test_gemm_gen_transposed(self):
