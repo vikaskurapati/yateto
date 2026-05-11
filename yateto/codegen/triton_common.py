@@ -480,6 +480,7 @@ def _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name):
     candidates = [
         kernel_fn,
         getattr(kernel_fn, "fn", None),
+        kernel_source_path,
     ]
     return [candidate for candidate in _dedup_preserve(candidates) if candidate is not None]
 
@@ -616,19 +617,19 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source
     base_sources = _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name)
     sources = _dedup_preserve(ast_sources + base_sources)
 
-    def options_for_target(target):
-        if not hasattr(target, "backend"):
-            return None
-        try:
-            import triton.compiler as triton_compiler
-            make_backend = getattr(triton_compiler, "make_backend", None)
-            if callable(make_backend):
-                backend_obj = make_backend(target)
-                parsed = backend_obj.parse_options(dict(num_warps=1, num_stages=3))
-                return parsed.__dict__ if hasattr(parsed, "__dict__") else parsed
-        except Exception:
-            pass
-        return dict(num_warps=1, num_stages=3)
+def options_for_target(target):
+    if not hasattr(target, "backend"):
+        return None
+    try:
+        import triton.compiler as triton_compiler
+        make_backend = getattr(triton_compiler, "make_backend", None)
+        if callable(make_backend):
+            backend_obj = make_backend(target)
+            parsed = backend_obj.parse_options(dict(num_warps=1, num_stages=3))
+            return parsed
+    except Exception:
+        pass
+    return None
 
     # Triton variants where JITFunction exposes `.compile()`
     compile_method = getattr(kernel_fn, "compile", None)
@@ -653,6 +654,11 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source
                         return triton_compile(source, target=target, options=options)
                     except TypeError:
                         return triton_compile(source, target=target)
+                    except Exception as err:
+                        errors.append(
+                            f"triton.compile(source={{_source_label(source)}}, target={{_target_label(target)}}, options=<parsed>) failed: {{err!r}}"
+                        )
+                        return triton_compile(source, target=target)
                 except Exception as err:
                     errors.append(
                         f"triton.compile(source={{_source_label(source)}}, target={{_target_label(target)}}) failed: {{err!r}}"
@@ -669,6 +675,11 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source
                     try:
                         return compiler_compile(source, target=target, options=options)
                     except TypeError:
+                        return compiler_compile(source, target=target)
+                    except Exception as err:
+                        errors.append(
+                            f"triton.compiler.compile(source={{_source_label(source)}}, target={{_target_label(target)}}, options=<parsed>) failed: {{err!r}}"
+                        )
                         return compiler_compile(source, target=target)
                 except Exception as err:
                     errors.append(
