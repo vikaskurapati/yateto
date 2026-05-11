@@ -519,15 +519,12 @@ def _guess_signature(kernel_fn, kernel_source_path):
         elif lname in ("alpha", "beta"):
             signature[name] = scalar_ty
         elif (
-            f"tl.load({{name}} + pid)" in kernel_src
-            or f"tl.load({{name}} + batch_idx)" in kernel_src
+            f"tl.load({name} + pid)" in kernel_src
+            or f"tl.load({name} + batch_idx)" in kernel_src
         ):
-            # Pointer-based YATeTo operands are passed as pointer arrays
-            # (`real**` in the generated C++ wrapper). The Triton source then
-            # loads the per-batch base pointer via `tl.load(A+pid)` before
-            # issuing element loads. Mark these arguments as pointer-to-pointer
-            # so ASTSource compilation does not type the loaded base as a real.
-            signature[name] = "**" + scalar_ty
+            # Pointer arrays (real**) are represented as pointers to 64-bit 
+            # unsigned integers representing the memory addresses.
+            signature[name] = "*u64"
         else:
             signature[name] = "*" + scalar_ty
     return signature

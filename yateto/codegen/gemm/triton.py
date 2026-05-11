@@ -15,7 +15,7 @@ def _operand_parameters(name, address_mode):
 
 def _operand_base(name, address_mode, distance, float_type):
   if address_mode == 'pointer_based':
-    return f'tl.load({name} + pid) + extra_offset_{name}'
+    return f'tl.load({name} + pid).to(tl.pointer_type({float_type})) + extra_offset_{name}'
   if address_mode == 'strided':
     return f'{name} + pid * {distance}'
   if address_mode == 'none':
