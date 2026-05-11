@@ -281,6 +281,8 @@ class TestTritonCompiler(unittest.TestCase):
         self.assertIn('ASTSource', src)
         self.assertIn('"**" + scalar_ty', src)
         self.assertIn("Pointer-based YATeTo operands", src)
+        self.assertIn('f"tl.load({{name}} + pid)"', src)
+        self.assertIn('f"tl.load({{name}} + batch_idx)"', src)
 
     def test_compile_with_compat_options_helper_is_nested(self):
         """Regression test for generated compile.py indentation.
