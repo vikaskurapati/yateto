@@ -66,10 +66,10 @@ import triton.language as tl
 def {kernel_name}({', '.join(params)}):
   pid = tl.program_id(0)
 {batch_guard}{chr(10).join(base_statements)}
-  for i in tl.static_range(0, {gd['M']}):
-    for j in tl.static_range(0, {gd['N']}):
+  for i in range({gd['M']}):
+    for j in range({gd['N']}):
       acc = tl.full((), 0.0, {floating_type})
-      for kk in tl.static_range(0, {gd['K']}):
+      for kk in range({gd['K']}):
         a_val = tl.load(base_A + {a_index})
         b_val = tl.load(base_B + {b_index})
         acc += a_val * b_val

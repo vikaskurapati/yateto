@@ -53,7 +53,7 @@ class TritonScalarKernelArgument:
 
 class BatchedOperationsAux:
     """Constants for batched operations."""
-    NUM_ELEMENTS_NAME = 'num_elements'
+    NUM_ELEMENTS_NAME = 'numElements'
     STREAM_PTR_NAME = 'streamPtr'
     EXTRA_OFFSET_NAME = 'extraOffset'
 
@@ -519,8 +519,8 @@ def _guess_signature(kernel_fn, kernel_source_path):
         elif lname in ("alpha", "beta"):
             signature[name] = scalar_ty
         elif (
-            f"tl.load({name} + pid)" in kernel_src
-            or f"tl.load({name} + batch_idx)" in kernel_src
+            f"tl.load({{name}} + pid)" in kernel_src
+            or f"tl.load({{name}} + batch_idx)" in kernel_src
         ):
             # Pointer arrays (real**) are represented as pointers to 64-bit 
             # unsigned integers representing the memory addresses.
