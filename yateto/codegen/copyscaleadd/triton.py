@@ -14,7 +14,7 @@ def _operand_parameters(name, address_mode):
 
 def _operand_base(name, address_mode, distance, floating_type):
   if address_mode == 'pointer_based':
-      return f'tl.load({name} + batch_idx).to(tl.pointer_type({floating_type})) + extra_offset_{name}'
+    return f'tl.load({name} + batch_idx) + extra_offset_{name}'
   if address_mode == 'strided':
     return f'{name} + batch_idx * {distance}'
   if address_mode == 'none':

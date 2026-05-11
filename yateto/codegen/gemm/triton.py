@@ -15,7 +15,7 @@ def _operand_parameters(name, address_mode):
 
 def _operand_base(name, address_mode, distance, float_type):
   if address_mode == 'pointer_based':
-    return f'tl.load({name} + pid).to(tl.pointer_type({float_type})) + extra_offset_{name}'
+    return f'tl.load({name} + pid) + extra_offset_{name}'
   if address_mode == 'strided':
     return f'{name} + pid * {distance}'
   if address_mode == 'none':
@@ -68,7 +68,7 @@ def {kernel_name}({', '.join(params)}):
 {batch_guard}{chr(10).join(base_statements)}
   for i in tl.static_range(0, {gd['M']}):
     for j in tl.static_range(0, {gd['N']}):
-      acc = 0.0
+      acc = tl.full((), 0.0, {floating_type})
       for kk in tl.static_range(0, {gd['K']}):
         a_val = tl.load(base_A + {a_index})
         b_val = tl.load(base_B + {b_index})
