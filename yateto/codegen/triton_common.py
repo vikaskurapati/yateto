@@ -480,10 +480,7 @@ def _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name):
     candidates = [
         kernel_fn,
         getattr(kernel_fn, "fn", None),
-        kernel_source_path,
     ]
-    if requested_kernel_name:
-        candidates.append(kernel_source_path + ":" + requested_kernel_name)
     return [candidate for candidate in _dedup_preserve(candidates) if candidate is not None]
 
 
@@ -494,10 +491,6 @@ def _source_label(source):
 
 
 def _guess_signature(kernel_fn, kernel_source_path):
-    fn = getattr(kernel_fn, "fn", None)
-    if fn is None:
-        return None
-
     scalar_ty = "fp32"
     try:
         with open(kernel_source_path, "r") as f:
@@ -507,21 +500,26 @@ def _guess_signature(kernel_fn, kernel_source_path):
     except Exception:
         pass
 
-    try:
-        params = list(inspect.signature(fn).parameters.keys())
-    except Exception:
-        return None
+    arg_names = getattr(kernel_fn, "arg_names", None)
+    if arg_names is None:
+        fn = getattr(kernel_fn, "fn", None)
+        if fn is None:
+            return None
+        try:
+            arg_names = list(inspect.signature(fn).parameters.keys())
+        except Exception:
+            return None
 
-    sig_items = []
-    for name in params:
+    signature = dict()
+    for name in arg_names:
         lname = name.lower()
         if lname.startswith("num_elements") or lname.startswith("extra_offset"):
-            sig_items.append("i64")
+            signature[name] = "i64"
         elif lname in ("alpha", "beta"):
-            sig_items.append(scalar_ty)
+            signature[name] = scalar_ty
         else:
-            sig_items.append("*" + scalar_ty)
-    return sig_items
+            signature[name] = "*" + scalar_ty
+    return signature
 
 
 def _ast_source_candidates(kernel_fn, kernel_source_path):
@@ -547,19 +545,19 @@ def _ast_source_candidates(kernel_fn, kernel_source_path):
         if isinstance(globals_dict, dict):
             add_ast_class(globals_dict.get("ASTSource"))
 
-    signature_items = _guess_signature(kernel_fn, kernel_source_path)
-    signature_candidates = []
-    if signature_items:
-        signature_candidates.append(",".join(signature_items))
-        signature_candidates.append(dict(enumerate(signature_items)))
-    maybe_sig = getattr(kernel_fn, "signature", None)
-    if maybe_sig is not None:
-        signature_candidates.append(maybe_sig)
-    signature_candidates.append(None)
+    signature = _guess_signature(kernel_fn, kernel_source_path)
+    signature_candidates = [signature, None] if signature is not None else [None]
     signature_candidates = _dedup_preserve(signature_candidates)
 
-    fn_candidates = [kernel_fn, getattr(kernel_fn, "fn", None)]
-    fn_candidates = [fn for fn in _dedup_preserve(fn_candidates) if fn is not None]
+    create_binder = getattr(kernel_fn, "create_binder", None)
+    if callable(create_binder):
+        try:
+            create_binder()
+        except Exception:
+            pass
+
+    # Prefer the JIT function itself: it provides cache_key and arg_names in newer Triton.
+    fn_candidates = [kernel_fn]
 
     ast_sources = []
     for ast_cls in ast_classes:
@@ -576,6 +574,10 @@ def _ast_source_candidates(kernel_fn, kernel_source_path):
                 kwargs = dict()
                 if has_fn and fn_key:
                     kwargs[fn_key] = fn
+                if "constexprs" in param_names:
+                    kwargs["constexprs"] = dict()
+                if "attrs" in param_names:
+                    kwargs["attrs"] = dict()
                 if has_signature and sig is not None:
                     kwargs["signature"] = sig
 
@@ -614,6 +616,20 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source
     base_sources = _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name)
     sources = _dedup_preserve(ast_sources + base_sources)
 
+    def options_for_target(target):
+        if not hasattr(target, "backend"):
+            return None
+        try:
+            import triton.compiler as triton_compiler
+            make_backend = getattr(triton_compiler, "make_backend", None)
+            if callable(make_backend):
+                backend_obj = make_backend(target)
+                parsed = backend_obj.parse_options(dict(num_warps=1, num_stages=3))
+                return parsed.__dict__ if hasattr(parsed, "__dict__") else parsed
+        except Exception:
+            pass
+        return dict(num_warps=1, num_stages=3)
+
     # Triton variants where JITFunction exposes `.compile()`
     compile_method = getattr(kernel_fn, "compile", None)
     if callable(compile_method):
@@ -630,7 +646,13 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source
         for source in sources:
             for target in targets:
                 try:
-                    return triton_compile(source, target=target)
+                    options = options_for_target(target)
+                    if options is None:
+                        return triton_compile(source, target=target)
+                    try:
+                        return triton_compile(source, target=target, options=options)
+                    except TypeError:
+                        return triton_compile(source, target=target)
                 except Exception as err:
                     errors.append(
                         f"triton.compile(source={{_source_label(source)}}, target={{_target_label(target)}}) failed: {{err!r}}"
@@ -641,7 +663,13 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source
         for source in sources:
             for target in targets:
                 try:
-                    return compiler_compile(source, target=target)
+                    options = options_for_target(target)
+                    if options is None:
+                        return compiler_compile(source, target=target)
+                    try:
+                        return compiler_compile(source, target=target, options=options)
+                    except TypeError:
+                        return compiler_compile(source, target=target)
                 except Exception as err:
                     errors.append(
                         f"triton.compiler.compile(source={{_source_label(source)}}, target={{_target_label(target)}}) failed: {{err!r}}"
