@@ -4,11 +4,16 @@ import inspect
 import unittest
 import sys
 import os
+import tempfile
 
 # Add yateto to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from yateto.memory import DenseMemoryLayout
+from yateto.codegen.triton_common import (
+    compile_triton_kernel,
+    make_triton_kernel_name
+)
 
 
 class TestTritonKernelArgument(unittest.TestCase):
@@ -249,13 +254,10 @@ class TestTritonCompiler(unittest.TestCase):
     
     def test_compile_kernel_function_exists(self):
         """compile_triton_kernel function should exist"""
-        from yateto.codegen.triton_common import compile_triton_kernel
         self.assertTrue(callable(compile_triton_kernel))
     
     def test_compile_kernel_signature(self):
         """compile_triton_kernel should accept kernel source and config"""
-        from yateto.codegen.triton_common import compile_triton_kernel
-        import inspect
         
         sig = inspect.signature(compile_triton_kernel)
         params = list(sig.parameters.keys())
@@ -267,7 +269,6 @@ class TestTritonCompiler(unittest.TestCase):
 
     def test_compile_kernel_contains_api_compat_fallbacks(self):
         """compile_triton_kernel should support multiple Triton compile APIs"""
-        from yateto.codegen.triton_common import compile_triton_kernel
         import inspect
 
         src = inspect.getsource(compile_triton_kernel)
@@ -278,6 +279,19 @@ class TestTritonCompiler(unittest.TestCase):
         self.assertIn('__globals__', src)
         self.assertIn('kernel_source_path', src)
         self.assertIn('ASTSource', src)
+        self.assertIn('"**" + scalar_ty', src)
+        self.assertIn("Pointer-based YATeTo operands", src)
+
+    def test_compile_with_compat_options_helper_is_nested(self):
+        """Regression test for generated compile.py indentation.
+
+        If options_for_target is emitted at top-level indentation,
+        compile_with_compat falls through and returns None.
+        """
+        source = inspect.getsource(compile_triton_kernel)
+        self.assertIn("def compile_with_compat(", source)
+        self.assertIn("    def options_for_target(target):", source)
+        self.assertNotIn("\ndef options_for_target(target):", source)
 
 
 class TestTritonHelpers(unittest.TestCase):
@@ -285,7 +299,6 @@ class TestTritonHelpers(unittest.TestCase):
     
     def test_make_triton_kernel_name(self):
         """Should generate valid kernel names"""
-        from yateto.codegen.triton_common import make_triton_kernel_name
         
         name = make_triton_kernel_name('gemm', transpose_a=False, transpose_b=False)
         
@@ -296,7 +309,6 @@ class TestTritonHelpers(unittest.TestCase):
     
     def test_make_triton_kernel_name_transpose(self):
         """Should encode transpose information in name"""
-        from yateto.codegen.triton_common import make_triton_kernel_name
         
         name_nn = make_triton_kernel_name('gemm', transpose_a=False, transpose_b=False)
         name_nt = make_triton_kernel_name('gemm', transpose_a=False, transpose_b=True)
