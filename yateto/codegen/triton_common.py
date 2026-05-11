@@ -283,29 +283,42 @@ import triton
 import kernel
 
 def is_triton_jit_function(obj):
-    """Return True if ob looks like a Triton @triton.jit function.
-    
-    Triton has chaned the exact JITFunction API across versions, sd avoid
+    """Return True if obj looks like a Triton @triton.jit function.
+
+    Triton has changed the exact JITFunction API across versions, so avoid
     relying on a single attribute pair such as compile/run.
     """
-    
+
     cls = type(obj)
     cls_name = cls.__name__
     cls_module = getattr(cls, "__module__", "")
-    
+
     if cls_name == "JITFunction" and cls_module.startswith("triton"):
         return True
-    
+
     if hasattr(obj, "fn") and callable(getattr(obj, "fn")) and cls_module.startswith("triton"):
         return True
-    
+
     if hasattr(obj, "src") and cls_module.startswith("triton"):
         return True
-    
+
     return False
+
+
+def discover_triton_jit_functions(module):
+    candidates = []
+    for name in dir(module):
+        if name.startswith("__"):
+            continue
+        obj = getattr(module, name)
+        if is_triton_jit_function(obj):
+            candidates.append((name, obj))
+    return candidates
+
 
 requested_kernel_name = {kernel_name!r}
 kernel_fn = None
+candidates = discover_triton_jit_functions(kernel)
 
 if requested_kernel_name is not None:
     kernel_fn = getattr(kernel, requested_kernel_name, None)
@@ -314,15 +327,18 @@ if requested_kernel_name is not None:
             f"Object named '{{requested_kernel_name}}' exists but is not a @triton.jit function "
             f"(type={{type(kernel_fn)!r}})"
         )
+    if kernel_fn is None:
+        if len(candidates) == 1:
+            kernel_fn = candidates[0][1]
+        else:
+            candidate_names = ", ".join(name for name, _ in candidates) if candidates else "<none>"
+            raise RuntimeError(
+                f"No @triton.jit function found in kernel named '{{requested_kernel_name}}'. "
+                f"Available @triton.jit functions: {{candidate_names}}"
+            )
 else:
-    candidates = []
-    for name in dir(kernel):
-        obj = getattr(kernel, name)
-        if is_triton_jit_function(obj):
-            candidates.append((name, obj))
-    
     if len(candidates) == 1:
-        kernel_fun = candidates[0][1]
+        kernel_fn = candidates[0][1]
     elif len(candidates) > 1:
         candidate_names = ", ".join(name for name, _ in candidates)
         raise RuntimeError(

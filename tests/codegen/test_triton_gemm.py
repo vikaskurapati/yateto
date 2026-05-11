@@ -95,5 +95,34 @@ class TestTritonGemmGen(unittest.TestCase):
         kernel_source = tritonGemmGen(self.arch, gd)
         self.assertIn('A, num_elements_A, B, C, num_elements_C, alpha, beta', kernel_source)
 
+    def test_gemm_gen_custom_kernel_name(self):
+        gd = {
+            'M': 12,
+            'N': 9,
+            'K': 7,
+            'LDA': 16,
+            'LDB': 9,
+            'LDC': 12,
+            'addrA': 'pointer_based',
+            'distA': 108,
+            'addrB': 'strided',
+            'distB': 63,
+            'addrC': 'pointer_based',
+            'distC': 108,
+            'alpha': 1.0,
+            'beta': 0.0,
+            'transA': False,
+            'transB': True,
+        }
+
+        kernel_name = (
+            'gemm_nn_addra_pointer_based_addrb_strided_addrc_pointer_based_'
+            'alpha_1_0_beta_0_0_k_7_lda_16_ldb_9_ldc_12_m_12_n_9'
+        )
+        kernel_source = tritonGemmGen(self.arch, gd, kernel_name=kernel_name)
+
+        self.assertIn(f'def {kernel_name}(', kernel_source)
+        self.assertNotIn('def gemm_nt_', kernel_source)
+
 if __name__ == '__main__':
     unittest.main()
