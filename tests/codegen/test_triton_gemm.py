@@ -44,10 +44,10 @@ class TestTritonGemmGen(unittest.TestCase):
         # Check arguments and computation
         self.assertIn('def gemm_nn_k_32_m_32_n_32', kernel_source)
         self.assertIn('A, num_elements_A, extra_offset_A, B, num_elements_B, extra_offset_B, C, num_elements_C, extra_offset_C, alpha, beta', kernel_source)
-        self.assertIn('offs_m = tl.arange(0, 32)', kernel_source)
-        self.assertIn('offs_n = tl.arange(0, 32)', kernel_source)
+        self.assertIn('for i in tl.static_range(0, 32):', kernel_source)
+        self.assertIn('for j in tl.static_range(0, 32):', kernel_source)
         self.assertIn('for kk in tl.static_range(0, 32):', kernel_source)
-        self.assertIn('acc += a_vec[:, None] * b_vec[None, :]', kernel_source)
+        self.assertIn('acc += a_val * b_val', kernel_source)
         
     def test_gemm_gen_transposed(self):
         gd = {
@@ -73,8 +73,8 @@ class TestTritonGemmGen(unittest.TestCase):
         self.assertIn('gemm_tt', kernel_source)
         
         # Transpose logic check
-        self.assertIn('a_vec = tl.load(base_A + kk + offs_m * 16, mask=mask_m, other=0.0)', kernel_source)
-        self.assertIn('b_vec = tl.load(base_B + offs_n + kk * 16, mask=mask_n, other=0.0)', kernel_source)
+        self.assertIn('a_val = tl.load(base_A + kk + i * 16)', kernel_source)
+        self.assertIn('b_val = tl.load(base_B + j + kk * 16)', kernel_source)
         
     def test_gemm_gen_addressing_modes(self):
         gd = {
@@ -99,7 +99,7 @@ class TestTritonGemmGen(unittest.TestCase):
         kernel_source = tritonGemmGen(self.arch, gd)
         self.assertIn('A, num_elements_A, B, C, num_elements_C, alpha, beta', kernel_source)
 
-    def test_gemm_gen_non_power_of_two_tiles(self):
+    def test_gemm_gen_avoids_vector_outer_product_path(self):
         gd = {
             'M': 12,
             'N': 9,
@@ -121,10 +121,9 @@ class TestTritonGemmGen(unittest.TestCase):
 
         kernel_source = tritonGemmGen(self.arch, gd)
 
-        self.assertIn('offs_m = tl.arange(0, 16)', kernel_source)
-        self.assertIn('offs_n = tl.arange(0, 16)', kernel_source)
-        self.assertIn('mask_m = offs_m < 12', kernel_source)
-        self.assertIn('mask_n = offs_n < 9', kernel_source)
+        self.assertNotIn('tl.arange(', kernel_source)
+        self.assertNotIn('tl.zeros((', kernel_source)
+        self.assertNotIn('[:, None]', kernel_source)
         self.assertIn('for kk in tl.static_range(0, 7):', kernel_source)
 
     def test_gemm_gen_custom_kernel_name(self):
