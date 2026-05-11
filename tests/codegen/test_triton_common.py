@@ -273,6 +273,7 @@ class TestTritonCompiler(unittest.TestCase):
         self.assertIn('kernel_fn.compile', src)
         self.assertIn('triton.compile(', src)
         self.assertIn('triton.compiler', src)
+        self.assertIn('GPUTarget', src)
 
 
 class TestTritonHelpers(unittest.TestCase):

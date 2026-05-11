@@ -247,10 +247,12 @@ def compile_triton_kernel(kernel_source: str, output_path: str, arch: str, kerne
     # Determine backend from architecture
     if arch.startswith('sm_'):
         backend = 'cuda'
-        target_str = f"cuda:{arch.replace('sm_', '')}"
+        target_arch = arch.replace('sm_', '')
+        target_str = f"{backend}:{target_arch}"
     elif arch.startswith('gfx'):
         backend = 'hip'
-        target_str = arch
+        target_arch = arch
+        target_str = f"{backend}:{target_arch}"
     else:
         raise ValueError(f'Unknown architecture: {arch}')
     
@@ -355,16 +357,119 @@ if kernel_fn is None:
         + f". Exported names: {{exported}}"
     )
 
-def compile_with_compat(kernel_fn, target):
+def _dedup_preserve(items):
+    seen = set()
+    result = []
+    for item in items:
+        key = (type(item), str(item))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _arch_candidates(backend, arch_hint):
+    values = [arch_hint]
+    token = str(arch_hint).lower()
+
+    if backend == "cuda":
+        token = token.replace("sm_", "").replace("sm", "")
+        values.append(token)
+        digits = "".join(ch for ch in token if ch.isdigit())
+        if digits:
+            values.extend([digits, int(digits), "sm" + digits, "sm_" + digits])
+        if token.endswith("a") and digits:
+            values.extend([digits + "a", "sm" + digits + "a", "sm_" + digits + "a"])
+    elif backend == "hip":
+        values.append(token)
+        if token.startswith("gfx"):
+            values.append(token.replace("gfx", ""))
+        else:
+            values.append("gfx" + token)
+
+    return _dedup_preserve(values)
+
+
+def _instantiate_gputarget(cls, backend, arch_value):
+    warp_size = 32 if backend == "cuda" else 64
+    kw_attempts = [
+        dict(backend=backend, arch=arch_value, warp_size=warp_size),
+        dict(backend=backend, arch=arch_value),
+        dict(arch=arch_value, backend=backend),
+        dict(arch=arch_value),
+    ]
+    for kwargs in kw_attempts:
+        try:
+            return cls(**kwargs)
+        except TypeError:
+            pass
+        except Exception:
+            pass
+
+    pos_attempts = [
+        (backend, arch_value, warp_size),
+        (backend, arch_value),
+        (arch_value,),
+    ]
+    for args in pos_attempts:
+        try:
+            return cls(*args)
+        except Exception:
+            pass
+    return None
+
+
+def _target_candidates(target_str, backend, arch_hint):
+    candidates = [target_str]
+
+    # Newer Triton versions require target to be a GPUTarget object.
+    modules = [
+        "triton.backends.compiler",
+        "triton.backends.nvidia.compiler",
+        "triton.backends.amd.compiler",
+    ]
+    classes = []
+    for module_name in modules:
+        try:
+            module = __import__(module_name, fromlist=["GPUTarget"])
+            cls = getattr(module, "GPUTarget", None)
+            if cls is not None and cls not in classes:
+                classes.append(cls)
+        except Exception:
+            pass
+
+    for cls in classes:
+        for arch_value in _arch_candidates(backend, arch_hint):
+            target_obj = _instantiate_gputarget(cls, backend, arch_value)
+            if target_obj is not None:
+                candidates.append(target_obj)
+
+    return candidates
+
+
+def _target_label(target):
+    if isinstance(target, (str, int, float)):
+        return repr(target)
+    backend_attr = getattr(target, "backend", None)
+    arch_attr = getattr(target, "arch", None)
+    return f"{{type(target).__name__}}(backend={{backend_attr!r}}, arch={{arch_attr!r}})"
+
+
+def compile_with_compat(kernel_fn, target_str, backend, arch_hint):
     errors = []
+    targets = _target_candidates(target_str, backend, arch_hint)
 
     # Triton variants where JITFunction exposes `.compile()`
     compile_method = getattr(kernel_fn, "compile", None)
     if callable(compile_method):
-        try:
-            return compile_method(target=target)
-        except Exception as err:
-            errors.append(f"kernel_fn.compile(target=...) failed: {{err!r}}")
+        for target in targets:
+            try:
+                return compile_method(target=target)
+            except Exception as err:
+                errors.append(
+                    f"kernel_fn.compile(target={{_target_label(target)}}) failed: {{err!r}}"
+                )
 
     # Triton variants with module-level `triton.compile(...)`
     triton_compile = getattr(triton, "compile", None)
@@ -372,12 +477,13 @@ def compile_with_compat(kernel_fn, target):
         for candidate in (kernel_fn, getattr(kernel_fn, "fn", None)):
             if candidate is None:
                 continue
-            try:
-                return triton_compile(candidate, target=target)
-            except Exception as err:
-                errors.append(
-                    f"triton.compile(type={{type(candidate).__name__}}, target=...) failed: {{err!r}}"
-                )
+            for target in targets:
+                try:
+                    return triton_compile(candidate, target=target)
+                except Exception as err:
+                    errors.append(
+                        f"triton.compile(type={{type(candidate).__name__}}, target={{_target_label(target)}}) failed: {{err!r}}"
+                    )
 
     # Triton variants where compiler API is exposed via triton.compiler.compile(...)
     try:
@@ -387,12 +493,13 @@ def compile_with_compat(kernel_fn, target):
             for candidate in (kernel_fn, getattr(kernel_fn, "fn", None)):
                 if candidate is None:
                     continue
-                try:
-                    return compiler_compile(candidate, target=target)
-                except Exception as err:
-                    errors.append(
-                        f"triton.compiler.compile(type={{type(candidate).__name__}}, target=...) failed: {{err!r}}"
-                    )
+                for target in targets:
+                    try:
+                        return compiler_compile(candidate, target=target)
+                    except Exception as err:
+                        errors.append(
+                            f"triton.compiler.compile(type={{type(candidate).__name__}}, target={{_target_label(target)}}) failed: {{err!r}}"
+                        )
     except Exception as err:
         errors.append(f"import triton.compiler failed: {{err!r}}")
 
@@ -447,7 +554,12 @@ def extract_binary(compiled):
     )
 
 
-compiled = compile_with_compat(kernel_fn, target="{target_str}")
+compiled = compile_with_compat(
+    kernel_fn,
+    target_str="{target_str}",
+    backend="{backend}",
+    arch_hint="{target_arch}",
+)
 binary = extract_binary(compiled)
 
 with open("{output_path}", "wb") as f:
