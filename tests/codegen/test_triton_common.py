@@ -274,6 +274,7 @@ class TestTritonCompiler(unittest.TestCase):
         self.assertIn('triton.compile(', src)
         self.assertIn('triton.compiler', src)
         self.assertIn('GPUTarget', src)
+        self.assertIn('__globals__', src)
 
 
 class TestTritonHelpers(unittest.TestCase):
