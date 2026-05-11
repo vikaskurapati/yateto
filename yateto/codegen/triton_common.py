@@ -277,6 +277,7 @@ def compile_triton_kernel(kernel_source: str, output_path: str, arch: str, kerne
         with open(compile_script, 'w') as f:
             f.write(f'''
 import sys
+import os
 sys.path.insert(0, "{tmpdir}")
 
 import triton
@@ -354,23 +355,100 @@ if kernel_fn is None:
         + f". Exported names: {{exported}}"
     )
 
-compiled = kernel_fn.compile(target="{target_str}")
+def compile_with_compat(kernel_fn, target):
+    errors = []
 
-asm = getattr(compiled, "asm", None)
-if asm is None:
-    raise RuntimeError("Triton compilation succeeded but produced no asm dictionary")
+    # Triton variants where JITFunction exposes `.compile()`
+    compile_method = getattr(kernel_fn, "compile", None)
+    if callable(compile_method):
+        try:
+            return compile_method(target=target)
+        except Exception as err:
+            errors.append(f"kernel_fn.compile(target=...) failed: {{err!r}}")
 
-binary = None
-for key in ("cubin", "hsaco", "{backend}", "ptx", "llir"):
-    if key in asm:
-        binary = asm[key]
-        break
+    # Triton variants with module-level `triton.compile(...)`
+    triton_compile = getattr(triton, "compile", None)
+    if callable(triton_compile):
+        for candidate in (kernel_fn, getattr(kernel_fn, "fn", None)):
+            if candidate is None:
+                continue
+            try:
+                return triton_compile(candidate, target=target)
+            except Exception as err:
+                errors.append(
+                    f"triton.compile(type={{type(candidate).__name__}}, target=...) failed: {{err!r}}"
+                )
 
-if binary is None:
-    raise RuntimeError(f"Could not find a binary artifact in compiled asm keys: {{list(asm.keys())}}")
+    # Triton variants where compiler API is exposed via triton.compiler.compile(...)
+    try:
+        import triton.compiler as triton_compiler
+        compiler_compile = getattr(triton_compiler, "compile", None)
+        if callable(compiler_compile):
+            for candidate in (kernel_fn, getattr(kernel_fn, "fn", None)):
+                if candidate is None:
+                    continue
+                try:
+                    return compiler_compile(candidate, target=target)
+                except Exception as err:
+                    errors.append(
+                        f"triton.compiler.compile(type={{type(candidate).__name__}}, target=...) failed: {{err!r}}"
+                    )
+    except Exception as err:
+        errors.append(f"import triton.compiler failed: {{err!r}}")
 
-if isinstance(binary, str):
-    binary = binary.encode("utf-8")
+    details = "\\n".join(errors) if errors else "<no compile entry points were available>"
+    raise RuntimeError("Unable to compile Triton kernel with available APIs:\\n" + details)
+
+
+def extract_binary(compiled):
+    # Common Triton result shape: object with `.asm` dict
+    asm = getattr(compiled, "asm", None)
+    if isinstance(asm, dict):
+        for key in ("cubin", "hsaco", "{backend}", "ptx", "llir"):
+            if key in asm:
+                binary = asm[key]
+                if isinstance(binary, str):
+                    if os.path.exists(binary):
+                        with open(binary, "rb") as f:
+                            return f.read()
+                    return binary.encode("utf-8")
+                return binary
+
+    # Some variants expose the artifact as direct attributes
+    for attr in ("cubin", "hsaco", "ptx", "llir"):
+        if hasattr(compiled, attr):
+            binary = getattr(compiled, attr)
+            if binary:
+                if isinstance(binary, str):
+                    if os.path.exists(binary):
+                        with open(binary, "rb") as f:
+                            return f.read()
+                    return binary.encode("utf-8")
+                return binary
+
+    # Some APIs return a path directly
+    if isinstance(compiled, str):
+        if os.path.exists(compiled):
+            with open(compiled, "rb") as f:
+                return f.read()
+        return compiled.encode("utf-8")
+    if isinstance(compiled, bytes):
+        return compiled
+
+    artifact_path = getattr(compiled, "path", None)
+    if isinstance(artifact_path, str) and os.path.exists(artifact_path):
+        with open(artifact_path, "rb") as f:
+            return f.read()
+
+    available_attrs = sorted([a for a in dir(compiled) if not a.startswith("_")])[:30]
+    raise RuntimeError(
+        f"Could not extract Triton binary artifact from compiled object type={{type(compiled)!r}}; "
+        f"visible attrs={{available_attrs}}"
+    )
+
+
+compiled = compile_with_compat(kernel_fn, target="{target_str}")
+binary = extract_binary(compiled)
 
 with open("{output_path}", "wb") as f:
     f.write(binary)

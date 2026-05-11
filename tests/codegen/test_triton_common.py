@@ -264,6 +264,16 @@ class TestTritonCompiler(unittest.TestCase):
         self.assertIn('output_path', params)
         self.assertIn('arch', params)
 
+    def test_compile_kernel_contains_api_compat_fallbacks(self):
+        """compile_triton_kernel should support multiple Triton compile APIs"""
+        from yateto.codegen.triton_common import compile_triton_kernel
+        import inspect
+
+        src = inspect.getsource(compile_triton_kernel)
+        self.assertIn('kernel_fn.compile', src)
+        self.assertIn('triton.compile(', src)
+        self.assertIn('triton.compiler', src)
+
 
 class TestTritonHelpers(unittest.TestCase):
     """Test helper functions for Triton code generation"""
