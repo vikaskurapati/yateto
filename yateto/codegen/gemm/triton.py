@@ -3,11 +3,11 @@ from __future__ import annotations
 from ..triton_common import make_triton_kernel_name
 
 
-def _next_power_of_2(n):
-  p = 1
-  while p < n:
-    p <<= 1
-  return p
+def _next_power_of_two(value):
+  power_of_two = 1
+  while power_of_two < value:
+    power_of_two *= 2
+  return power_of_two
 
 
 def _operand_parameters(name, address_mode):
@@ -52,24 +52,23 @@ def tritonGemmGen(arch, gd, kernel_name=''):
 
   params.extend(['alpha', 'beta'])
 
-  block_m = _next_power_of_2(gd['M'])
-  block_n = _next_power_of_2(gd['N'])
-
   if gd['transA']:
-    load_a_vec = f'    a_vec = tl.load(base_A + kk + offs_m * {gd["LDA"]})'
+    a_index = f'kk + offs_m * {gd["LDA"]}'
   else:
-    load_a_vec = f'    a_vec = tl.load(base_A + offs_m + kk * {gd["LDA"]})'
+    a_index = f'offs_m + kk * {gd["LDA"]}'
 
   if gd['transB']:
-    load_b_vec = f'    b_vec = tl.load(base_B + offs_n + kk * {gd["LDB"]})'
+    b_index = f'offs_n + kk * {gd["LDB"]}'
   else:
-    load_b_vec = f'    b_vec = tl.load(base_B + kk + offs_n * {gd["LDB"]})'
+    b_index = f'kk + offs_n * {gd["LDB"]}'
 
   batch_guard = ''
   if batch_limit is not None:
     batch_guard = f'  if pid >= {batch_limit}:\n    return\n'
 
   floating_type = 'tl.float64' if arch.bytesPerReal == 8 else 'tl.float32'
+  tile_m = _next_power_of_two(gd['M'])
+  tile_n = _next_power_of_two(gd['N'])
   return f"""import triton
 import triton.language as tl
 
@@ -77,19 +76,20 @@ import triton.language as tl
 def {kernel_name}({', '.join(params)}):
   pid = tl.program_id(0)
 {batch_guard}{chr(10).join(base_statements)}
-  offs_m = tl.arange(0, {block_m})
-  offs_n = tl.arange(0, {block_n})
+  offs_m = tl.arange(0, {tile_m})
+  offs_n = tl.arange(0, {tile_n})
   mask_m = offs_m < {gd['M']}
   mask_n = offs_n < {gd['N']}
-  acc = tl.zeros(({block_m}, {block_n}), dtype={floating_type})
+
+  acc = tl.zeros(({tile_m}, {tile_n}), dtype={floating_type})
   for kk in tl.static_range(0, {gd['K']}):
-{load_a_vec[:-1]}, mask=mask_m, other=0.0)
-{load_b_vec[:-1]}, mask=mask_n, other=0.0)
+    a_vec = tl.load(base_A + {a_index}, mask=mask_m, other=0.0)
+    b_vec = tl.load(base_B + {b_index}, mask=mask_n, other=0.0)
     acc += a_vec[:, None] * b_vec[None, :]
 
   c_ptrs = base_C + offs_m[:, None] + offs_n[None, :] * {gd['LDC']}
-  mask_c = mask_m[:, None] & mask_n[None, :]
-  c_old = tl.load(c_ptrs, mask=mask_c, other=0.0)
-  c = alpha * acc + beta * c_old
-  tl.store(c_ptrs, c, mask=mask_c)
+  c_mask = mask_m[:, None] & mask_n[None, :]
+  c_old = tl.load(c_ptrs, mask=c_mask, other=0.0)
+  c_val = alpha * acc + beta * c_old
+  tl.store(c_ptrs, c_val, mask=c_mask)
 """
