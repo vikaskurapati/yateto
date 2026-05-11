@@ -617,19 +617,19 @@ def compile_with_compat(kernel_fn, target_str, backend, arch_hint, kernel_source
     base_sources = _source_candidates(kernel_fn, kernel_source_path, requested_kernel_name)
     sources = _dedup_preserve(ast_sources + base_sources)
 
-def options_for_target(target):
-    if not hasattr(target, "backend"):
+    def options_for_target(target):
+        if not hasattr(target, "backend"):
+            return None
+        try:
+            import triton.compiler as triton_compiler
+            make_backend = getattr(triton_compiler, "make_backend", None)
+            if callable(make_backend):
+                backend_obj = make_backend(target)
+                parsed = backend_obj.parse_options(dict(num_warps=1, num_stages=3))
+                return parsed
+        except Exception:
+            pass
         return None
-    try:
-        import triton.compiler as triton_compiler
-        make_backend = getattr(triton_compiler, "make_backend", None)
-        if callable(make_backend):
-            backend_obj = make_backend(target)
-            parsed = backend_obj.parse_options(dict(num_warps=1, num_stages=3))
-            return parsed
-    except Exception:
-        pass
-    return None
 
     # Triton variants where JITFunction exposes `.compile()`
     compile_method = getattr(kernel_fn, "compile", None)
