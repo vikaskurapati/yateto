@@ -4,7 +4,7 @@ from ...gemm_configuration import tinytc, Triton
 from .tinytc import CopyScaleAddTinytc
 from .triton import CopyScaleAddTriton
 
-import importlib
+import importlib.util
 gf_spec = importlib.util.find_spec('gemmforge')
 try:
   if gf_spec:
